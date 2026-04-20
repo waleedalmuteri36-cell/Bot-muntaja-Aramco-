@@ -1,0 +1,164 @@
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const fs = require('fs');
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
+
+// Files
+const bankFile = './data/bank.json';
+const carsFile = './data/cars.json';
+const stocksFile = './data/stocks.json';
+const marketFile = './data/market.json';
+
+// Helpers
+const load = f => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : {});
+const save = (f, d) => fs.writeFileSync(f, JSON.stringify(d, null, 2));
+
+// Auto market
+setInterval(() => {
+  let m = load(marketFile);
+  if (Object.keys(m).length === 0) m = { ARAMCO: 100, SABIC: 80, STC: 60 };
+  for (let s in m) {
+    const change = Math.floor(Math.random() * 20) - 10;
+    m[s] = Math.max(10, m[s] + change);
+  }
+  save(marketFile, m);
+}, 60000);
+
+client.on('messageCreate', msg => {
+  if (msg.author.bot) return;
+
+  const args = msg.content.split(' ');
+  const cmd = args[0];
+  const userId = msg.author.id;
+
+  let bank = load(bankFile);
+  let cars = load(carsFile);
+  let stocks = load(stocksFile);
+  let market = load(marketFile);
+
+  // Help (Embed)
+  if (cmd === '-مساعدة') {
+    const e = new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle('📖 الأوامر')
+      .setDescription(`
+🏦 -انشاء
+💰 -بنك رصيد
+
+🚗 -شراء_سيارة اسم
+🚗 -سياراتي
+
+🪪 -لوحة تعيين رقم
+💼 -املاكي
+
+📈 -سوق
+📈 -سهم شراء اسم كمية
+📈 -سهم بيع اسم كمية
+      `);
+    return msg.channel.send({ embeds: [e] });
+  }
+
+  // Create account
+  if (cmd === '-انشاء') {
+    if (bank[userId]) return msg.reply('❌ عندك حساب');
+    bank[userId] = { cash: 10000 };
+    save(bankFile, bank);
+    return msg.reply('✅ تم إنشاء حساب');
+  }
+
+  if (!bank[userId]) return;
+
+  // Balance
+  if (cmd === '-بنك' && args[1] === 'رصيد') {
+    return msg.reply(`💰 ${bank[userId].cash}`);
+  }
+
+  // Buy car
+  if (cmd === '-شراء_سيارة') {
+    const name = args[1];
+    if (!name) return msg.reply('اكتب اسم السيارة');
+    if (bank[userId].cash < 5000) return msg.reply('❌ فلوسك قليلة');
+
+    if (!cars[userId]) cars[userId] = [];
+    cars[userId].push({ name, plate: null });
+    bank[userId].cash -= 5000;
+
+    save(carsFile, cars);
+    save(bankFile, bank);
+    return msg.reply(`🚗 اشتريت ${name}`);
+  }
+
+  // My cars
+  if (cmd === '-سياراتي') {
+    const list = cars[userId] || [];
+    if (!list.length) return msg.reply('❌ ما عندك سيارات');
+    let t = '';
+    list.forEach((c, i) => t += `🚗 ${i+1}: ${c.name} | 🪪 ${c.plate || 'بدون'}\n`);
+    return msg.reply(t);
+  }
+
+  // Plate
+  if (cmd === '-لوحة' && args[1] === 'تعيين') {
+    const plate = args[2];
+    if (!plate) return msg.reply('اكتب رقم اللوحة');
+    if (!cars[userId] || !cars[userId][0]) return msg.reply('❌ ما عندك سيارة');
+    cars[userId][0].plate = plate;
+    save(carsFile, cars);
+    return msg.reply(`🪪 تم تعيين اللوحة: ${plate}`);
+  }
+
+  // Market
+  if (cmd === '-سوق') {
+    let t = '';
+    for (let s in market) t += `📈 ${s}: ${market[s]}\n`;
+    return msg.reply(t || 'لا يوجد بيانات');
+  }
+
+  // Buy stock
+  if (cmd === '-سهم' && args[1] === 'شراء') {
+    const name = args[2];
+    const qty = parseInt(args[3]);
+    if (!market[name] || !qty) return msg.reply('❌ خطأ');
+    const cost = market[name] * qty;
+    if (bank[userId].cash < cost) return msg.reply('❌ فلوسك قليلة');
+
+    if (!stocks[userId]) stocks[userId] = {};
+    stocks[userId][name] = (stocks[userId][name] || 0) + qty;
+
+    bank[userId].cash -= cost;
+    save(stocksFile, stocks);
+    save(bankFile, bank);
+    return msg.reply(`📈 اشتريت ${qty} من ${name}`);
+  }
+
+  // Sell stock
+  if (cmd === '-سهم' && args[1] === 'بيع') {
+    const name = args[2];
+    const qty = parseInt(args[3]);
+    if (!stocks[userId] || (stocks[userId][name] || 0) < qty) return msg.reply('❌ ما عندك كمية كافية');
+
+    bank[userId].cash += market[name] * qty;
+    stocks[userId][name] -= qty;
+
+    save(stocksFile, stocks);
+    save(bankFile, bank);
+    return msg.reply(`💰 بعت ${qty} من ${name}`);
+  }
+
+  // Properties
+  if (cmd === '-املاكي') {
+    let t = '💼 ممتلكاتك:\n';
+    t += `🚗 سيارات: ${(cars[userId] || []).length}\n`;
+    if (stocks[userId]) {
+      t += '📈 أسهم:\n';
+      for (let s in stocks[userId]) t += `${s}: ${stocks[userId][s]}\n`;
+    }
+    return msg.reply(t);
+  }
+
+});
+
+client.once('ready', () => console.log(`🔥 ${client.user.tag}`));
+client.login(process.env.TOKEN);
